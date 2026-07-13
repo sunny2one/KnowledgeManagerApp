@@ -1,10 +1,10 @@
-name: Build APK from ZIP
+name: Build Knowledge Manager APKs
 
 on:
   workflow_dispatch:
   push:
     paths:
-      - "KnowledgeInDualMobileProject.zip"
+      - "KnowledgeManagerBundle.zip"
       - ".github/workflows/android.yml"
 
 jobs:
@@ -21,22 +21,33 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      - name: Set up Gradle
+      - name: Set up Gradle 8.9
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "8.9"
 
-      - name: Unzip Project
+      - name: Unzip bundle
         run: |
-          mkdir project
-          unzip -q KnowledgeInDualMobileProject.zip -d project
+          rm -rf bundle
+          mkdir bundle
+          unzip -q KnowledgeManagerBundle.zip -d bundle
 
-      - name: Build APK
-        working-directory: project
+      - name: Build SearchBot
+        working-directory: bundle/SearchBot
         run: gradle assembleDebug
 
-      - name: Upload APK
+      - name: Build AnswerAssistant
+        working-directory: bundle/AnswerAssistant
+        run: gradle assembleDebug
+
+      - name: Upload SearchBot APK
         uses: actions/upload-artifact@v4
         with:
-          name: APK
-          path: project/app/build/outputs/apk/debug/app-debug.apk
+          name: KnowledgeSearchBot-APK
+          path: bundle/SearchBot/app/build/outputs/apk/debug/app-debug.apk
+
+      - name: Upload AnswerAssistant APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: KnowledgeAnswerAssistant-APK
+          path: bundle/AnswerAssistant/app/build/outputs/apk/debug/app-debug.apk
