@@ -1,0 +1,55 @@
+name: Build Two APKs
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "KnowledgeSearchBotProject.zip"
+      - "KnowledgeAnswerAssistantProject.zip"
+      - ".github/workflows/android.yml"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Gradle 8.9
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.9"
+
+      - name: Unzip projects
+        run: |
+          rm -rf search-app answer-app
+          mkdir search-app answer-app
+          unzip -q KnowledgeSearchBotProject.zip -d search-app
+          unzip -q KnowledgeAnswerAssistantProject.zip -d answer-app
+
+      - name: Build search app
+        working-directory: search-app
+        run: gradle assembleDebug
+
+      - name: Build answer app
+        working-directory: answer-app
+        run: gradle assembleDebug
+
+      - name: Upload search APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: KnowledgeSearchBot-APK
+          path: search-app/app/build/outputs/apk/debug/app-debug.apk
+
+      - name: Upload answer APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: KnowledgeAnswerAssistant-APK
+          path: answer-app/app/build/outputs/apk/debug/app-debug.apk
