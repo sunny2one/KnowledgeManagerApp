@@ -22,24 +22,24 @@ jobs:
       - name: Build debug APK
         run: gradle :app:assembleDebug --stacktrace
       - name: Rename APK
-        run: cp app/build/outputs/apk/debug/app-debug.apk BlogActivityManager_v1.1.apk
+        run: cp app/build/outputs/apk/debug/app-debug.apk BlogActivityManager_v1.3.apk
       - uses: actions/upload-artifact@v4
         with:
-          name: BlogActivityManager-v1.1
-          path: BlogActivityManager_v1.1.apk
+          name: BlogActivityManager-v1.3
+          path: BlogActivityManager_v1.3.apk
           if-no-files-found: error
           retention-days: 30
 
 
 ===== FILE: BlogActivityManager/README.md =====
-# Blog Activity Manager v1.1
+# Blog Activity Manager v1.3
 
 Android Kotlin + Jetpack Compose + Room + DataStore + AccessibilityService 프로젝트입니다.
 
 ## 빌드
 1. 저장소 최상단에 `.github`, `app`, `build.gradle.kts`, `settings.gradle.kts`, `gradle.properties`가 보이도록 업로드합니다.
 2. GitHub `Actions` → `Build Android APK` → `Run workflow`를 누릅니다.
-3. 완료 후 Artifacts의 `BlogActivityManager-v1.1`을 내려받습니다.
+3. 완료 후 Artifacts의 `BlogActivityManager-v1.3`을 내려받습니다.
 
 ## 사용 전 필수
 - 앱에서 키워드와 댓글 문구를 등록합니다.
@@ -56,13 +56,34 @@ Android Kotlin + Jetpack Compose + Room + DataStore + AccessibilityService 프�
 접근성 서비스는 앱 화면 구조에 의존합니다. 이 프로젝트는 빌드 가능한 전체 구조와 상태 머신을 제공하지만, 실제 기기에서 네이버 앱의 노드가 노출되는 방식에 따라 검색 결과 게시글 판별과 좋아요 상태 확인을 추가 조정해야 할 수 있습니다.
 
 
-## v1.1 수정사항
+## v1.2 수정사항
 - 운영시간 자동 시작 알람 및 재부팅 후 재등록
 - 네이버 블로그 패키지 외 화면 클릭 방지
 - SKIPPED/NEEDS_REVIEW 재처리 차단
 - 좋아요·댓글 개별 처리 상태 유지
 - 댓글 성공 판정 및 전체 노드 제한문구 감지 보강
 - 테스트 시작 버튼 분리
+
+
+## v1.2 수정사항
+- 완료 결과 기준 통계 집계 수정
+- 작업 종료 시 Foreground Service 및 WakeLock 정리
+- 댓글 처리 후 게시글 화면 복귀 보장
+- 테스트 실행은 댓글 사용 횟수에서 제외
+- 작업 완료 시 최신 설정을 다시 읽어 순환 위치만 갱신
+- 알림 상태 실시간 갱신
+- 운영 요일, 오류 동작, 네이버 자동 실행 설정 UI 추가
+- Room destructive migration 제거
+
+
+## v1.3 수정사항
+- Foreground Service 즉시 시작 처리
+- 일반 시작과 테스트 시작 실행 모드 완전 분리
+- 좋아요·댓글 일일 한도 모두 도달 시 자동 종료
+- 자정을 넘기는 운영시간의 전날 요일 판정 수정
+- 검색 제출, 블로그 탭, 최신순 선택 성공 여부 검증
+- 일시정지 시 WakeLock 해제, 재개 시 재획득
+- 댓글 한도 도달 시 댓글 문구 미등록으로 인한 오중지 방지
 
 
 ===== FILE: BlogActivityManager/app/build.gradle.kts =====
@@ -81,8 +102,8 @@ android {
         applicationId = "com.example.blogactivitymanager"
         minSdk = 28
         targetSdk = 35
-        versionCode = 2
-        versionName = "1.1"
+        versionCode = 4
+        versionName = "1.3"
     }
 
     buildFeatures { compose = true }
@@ -357,16 +378,39 @@ private fun SettingsScreen(s: AppSettings, save:(AppSettings)->Unit) {
         item { Text("설정", style = MaterialTheme.typography.headlineSmall) }
         item { CheckRow("좋아요 사용", local.likeEnabled) { local = local.copy(likeEnabled = it) } }
         item { CheckRow("댓글 사용", local.commentEnabled) { local = local.copy(commentEnabled = it) } }
-        item { CheckRow("테스트 모드", local.testMode) { local = local.copy(testMode = it) } }
         item { CheckRow("운영시간 사용", local.scheduleEnabled) { local = local.copy(scheduleEnabled = it) } }
         item { CheckRow("휴식 사용", local.restEnabled) { local = local.copy(restEnabled = it) } }
         item { CheckRow("화면 켜짐 유지", local.keepScreenOn) { local = local.copy(keepScreenOn = it) } }
+        item { CheckRow("네이버 앱 자동 실행", local.autoLaunchNaver) { local = local.copy(autoLaunchNaver = it) } }
         item { NumberField("최소 작업시간(초)", local.minSeconds) { local = local.copy(minSeconds = it) } }
         item { NumberField("최대 작업시간(초)", local.maxSeconds) { local = local.copy(maxSeconds = it) } }
         item { NumberField("시작 시", local.startHour) { local = local.copy(startHour = it.coerceIn(0,23)) } }
         item { NumberField("시작 분", local.startMinute) { local = local.copy(startMinute = it.coerceIn(0,59)) } }
         item { NumberField("종료 시", local.endHour) { local = local.copy(endHour = it.coerceIn(0,23)) } }
         item { NumberField("종료 분", local.endMinute) { local = local.copy(endMinute = it.coerceIn(0,59)) } }
+        item {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text("운영 요일")
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    listOf(1 to "월", 2 to "화", 3 to "수", 4 to "목").forEach { (day, label) ->
+                        FilterChip(
+                            selected = day in local.enabledDays,
+                            onClick = { local = local.copy(enabledDays = if (day in local.enabledDays) local.enabledDays - day else local.enabledDays + day) },
+                            label = { Text(label) }
+                        )
+                    }
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    listOf(5 to "금", 6 to "토", 7 to "일").forEach { (day, label) ->
+                        FilterChip(
+                            selected = day in local.enabledDays,
+                            onClick = { local = local.copy(enabledDays = if (day in local.enabledDays) local.enabledDays - day else local.enabledDays + day) },
+                            label = { Text(label) }
+                        )
+                    }
+                }
+            }
+        }
         item { NumberField("하루 최대 게시글", local.dailyPostLimit) { local = local.copy(dailyPostLimit = it) } }
         item { NumberField("하루 최대 좋아요", local.dailyLikeLimit) { local = local.copy(dailyLikeLimit = it) } }
         item { NumberField("하루 최대 댓글", local.dailyCommentLimit) { local = local.copy(dailyCommentLimit = it) } }
@@ -377,6 +421,15 @@ private fun SettingsScreen(s: AppSettings, save:(AppSettings)->Unit) {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 FilterChip(selected = local.commentMode == "SEQUENTIAL", onClick = { local = local.copy(commentMode = "SEQUENTIAL") }, label = { Text("댓글 순차") })
                 FilterChip(selected = local.commentMode == "RANDOM", onClick = { local = local.copy(commentMode = "RANDOM") }, label = { Text("댓글 랜덤") })
+            }
+        }
+        item {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text("오류 발생 시")
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilterChip(selected = local.errorAction == "PAUSE", onClick = { local = local.copy(errorAction = "PAUSE") }, label = { Text("일시정지") })
+                    FilterChip(selected = local.errorAction == "STOP", onClick = { local = local.copy(errorAction = "STOP") }, label = { Text("완전 중지") })
+                }
             }
         }
         item { Button(onClick = { save(local) }, Modifier.fillMaxWidth()) { Text("설정 저장") } }
@@ -440,7 +493,7 @@ abstract class AppDatabase : RoomDatabase() {
         @Volatile private var instance: AppDatabase? = null
         fun get(context: Context): AppDatabase = instance ?: synchronized(this) {
             instance ?: Room.databaseBuilder(context.applicationContext, AppDatabase::class.java, "blog_activity_manager.db")
-                .fallbackToDestructiveMigration().build().also { instance = it }
+                .build().also { instance = it }
         }
     }
 }
@@ -545,7 +598,7 @@ data class AppSettings(
     val restEvery: Int = 5,
     val restMinMinutes: Int = 3,
     val restMaxMinutes: Int = 7,
-    val testMode: Boolean = true,
+    val testMode: Boolean = false,
     val keepScreenOn: Boolean = true,
     val autoLaunchNaver: Boolean = true,
     val errorAction: String = "PAUSE",
@@ -601,7 +654,7 @@ class SettingsStore(private val context: Context) {
             restEvery = p[K.REST_EVERY] ?: 5,
             restMinMinutes = p[K.REST_MIN] ?: 3,
             restMaxMinutes = p[K.REST_MAX] ?: 7,
-            testMode = p[K.TEST] ?: true,
+            testMode = p[K.TEST] ?: false,
             keepScreenOn = p[K.SCREEN] ?: true,
             autoLaunchNaver = p[K.AUTO_LAUNCH] ?: true,
             errorAction = p[K.ERROR] ?: "PAUSE",
@@ -654,6 +707,8 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
@@ -665,15 +720,24 @@ class AutomationForegroundService : Service() {
         const val ACTION_STOP = "stop"
         private const val CHANNEL = "automation"
         private const val ID = 1001
+        private const val EXTRA_REASON = "reason"
 
         fun send(context: Context, action: String) {
             val i = Intent(context, AutomationForegroundService::class.java).setAction(action)
             if (Build.VERSION.SDK_INT >= 26) context.startForegroundService(i) else context.startService(i)
         }
+
+        fun stop(context: Context, reason: String) {
+            val i = Intent(context, AutomationForegroundService::class.java)
+                .setAction(ACTION_STOP)
+                .putExtra(EXTRA_REASON, reason)
+            context.startService(i)
+        }
     }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var wakeLock: PowerManager.WakeLock? = null
+    private var notificationJob: Job? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -681,26 +745,37 @@ class AutomationForegroundService : Service() {
             getSystemService(NotificationManager::class.java)
                 .createNotificationChannel(NotificationChannel(CHANNEL, "작업 상태", NotificationManager.IMPORTANCE_LOW))
         }
+        notificationJob = scope.launch {
+            AutomationState.state.collectLatest { state ->
+                if (state.running) {
+                    getSystemService(NotificationManager::class.java).notify(ID, notification())
+                }
+            }
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
-            ACTION_START, ACTION_TEST_START -> scope.launch {
-                val settings = SettingsStore(this@AutomationForegroundService).settings.first()
-                AutomationState.stopRequested = false
-                AutomationState.pauseRequested = false
-                AutomationState.finishCurrentThenStop = false
-                AutomationState.testRunOverride = intent.action == ACTION_TEST_START
-                AutomationState.state.value = AutomationState.state.value.copy(
-                    running = true,
-                    paused = false,
-                    status = if (AutomationState.testRunOverride) "테스트 시작됨" else "시작됨"
-                )
-                startForeground(ID, notification())
-                updateWakeLock(settings.keepScreenOn)
-                if (settings.autoLaunchNaver) launchNaver()
-                if (settings.scheduleEnabled) {
-                    ScheduleAlarmReceiver.scheduleNext(this@AutomationForegroundService, settings.startHour, settings.startMinute, settings.enabledDays)
+            ACTION_START, ACTION_TEST_START -> {
+                // Android가 요구하는 시간 안에 Foreground 상태로 먼저 전환합니다.
+                startForeground(ID, notification("시작 준비 중"))
+                val requestedAction = intent.action
+                scope.launch {
+                    val settings = SettingsStore(this@AutomationForegroundService).settings.first()
+                    AutomationState.stopRequested = false
+                    AutomationState.pauseRequested = false
+                    AutomationState.finishCurrentThenStop = false
+                    AutomationState.testRunOverride = requestedAction == ACTION_TEST_START
+                    AutomationState.state.value = AutomationState.state.value.copy(
+                        running = true,
+                        paused = false,
+                        status = if (AutomationState.testRunOverride) "테스트 시작됨" else "시작됨"
+                    )
+                    updateWakeLock(settings.keepScreenOn)
+                    if (settings.autoLaunchNaver) launchNaver()
+                    if (settings.scheduleEnabled) {
+                        ScheduleAlarmReceiver.scheduleNext(this@AutomationForegroundService, settings.startHour, settings.startMinute, settings.enabledDays)
+                    }
                 }
             }
             ACTION_PAUSE -> {
@@ -709,19 +784,27 @@ class AutomationForegroundService : Service() {
                     paused = AutomationState.pauseRequested,
                     status = if (AutomationState.pauseRequested) "일시정지" else "재개"
                 )
+                if (AutomationState.pauseRequested) {
+                    updateWakeLock(false)
+                } else {
+                    scope.launch {
+                        val settings = SettingsStore(this@AutomationForegroundService).settings.first()
+                        updateWakeLock(settings.keepScreenOn)
+                    }
+                }
                 getSystemService(NotificationManager::class.java).notify(ID, notification())
             }
-            ACTION_STOP -> stopServiceNow("사용자 중지")
+            ACTION_STOP -> stopServiceNow(intent.getStringExtra(EXTRA_REASON) ?: "사용자 중지")
         }
         return START_STICKY
     }
 
-    private fun notification(): Notification {
+    private fun notification(overrideText: String? = null): Notification {
         val s = AutomationState.state.value
         val open = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE)
         val pause = PendingIntent.getService(this, 1, Intent(this, javaClass).setAction(ACTION_PAUSE), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         val stop = PendingIntent.getService(this, 2, Intent(this, javaClass).setAction(ACTION_STOP), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-        val text = "${s.currentKeyword.ifBlank { "대기" }} · 오늘 ${s.todayProcessed}/${s.todayGoal.coerceAtLeast(0)}"
+        val text = overrideText ?: "${s.currentKeyword.ifBlank { "대기" }} · 오늘 ${s.todayProcessed}/${s.todayGoal.coerceAtLeast(0)}"
         return Notification.Builder(this, CHANNEL)
             .setContentTitle("Blog Activity Manager 실행 중")
             .setContentText(text)
@@ -763,6 +846,7 @@ class AutomationForegroundService : Service() {
     }
 
     override fun onDestroy() {
+        notificationJob?.cancel()
         wakeLock?.takeIf { it.isHeld }?.release()
         scope.cancel()
         super.onDestroy()
@@ -854,9 +938,13 @@ class BlogAccessibilityService : AccessibilityService() {
                 val stats = db.dao().getDailyStats(today) ?: DailyStatsEntity(today)
                 if (stats.processedCount >= settings.dailyPostLimit) return stopWith("하루 최대 게시글 수 도달")
 
+                val canRunLike = settings.likeEnabled && stats.likeSuccessCount < settings.dailyLikeLimit
+                val canRunComment = settings.commentEnabled && stats.commentSuccessCount < settings.dailyCommentLimit
+                if (!canRunLike && !canRunComment) return stopWith("오늘 좋아요·댓글 작업 한도 도달")
+
                 val keyword = nextKeyword(settings, today) ?: return stopWith("모든 키워드 목표 완료")
-                val comments = db.dao().getEnabledComments()
-                if (settings.commentEnabled && comments.isEmpty()) return stopWith("사용할 댓글 문구가 없습니다")
+                val comments = if (canRunComment) db.dao().getEnabledComments() else emptyList()
+                if (canRunComment && comments.isEmpty()) return stopWith("사용할 댓글 문구가 없습니다")
                 val comment = chooseComment(comments, settings)
 
                 val started = System.currentTimeMillis()
@@ -888,23 +976,23 @@ class BlogAccessibilityService : AccessibilityService() {
                 if (containsAny(root, NaverNodeTexts.BLOCKED)) return stopWith("보안 또는 이용 제한 화면 감지")
                 if (containsAny(root, NaverNodeTexts.PRIVATE_OR_DELETED)) {
                     saveHistory(postId, postTitle, blogName, keyword.keyword, "BUTTON_NOT_FOUND", "NOT_AVAILABLE", "SKIPPED", "비공개 또는 삭제", started, settings.testMode)
-                    finishPost(keyword, settings, stats, false, false, true)
+                    finishPost(keyword, stats, "BUTTON_NOT_FOUND", "NOT_AVAILABLE", "SKIPPED")
                     performGlobalAction(GLOBAL_ACTION_BACK)
                     continue
                 }
 
                 val previous = db.dao().latestHistory(postId)
-                val effectiveTestMode = settings.testMode || AutomationState.testRunOverride
+                val effectiveTestMode = AutomationState.testRunOverride
                 val runSettings = settings.copy(testMode = effectiveTestMode)
                 val likeHandled = previous?.likeResult in setOf("SUCCESS", "ALREADY_LIKED")
                 val commentHandled = previous?.commentResult in setOf("SUCCESS", "RESULT_UNCONFIRMED")
                 val likeResult = when {
-                    !settings.likeEnabled || stats.likeSuccessCount >= settings.dailyLikeLimit -> "DISABLED"
+                    !canRunLike -> "DISABLED"
                     likeHandled -> previous?.likeResult ?: "DISABLED"
                     else -> processLike(runSettings)
                 }
                 val commentResult = when {
-                    !settings.commentEnabled || stats.commentSuccessCount >= settings.dailyCommentLimit -> "DISABLED"
+                    !canRunComment -> "DISABLED"
                     commentHandled -> previous?.commentResult ?: "DISABLED"
                     else -> processComment(runSettings, comment?.content.orEmpty())
                 }
@@ -912,8 +1000,8 @@ class BlogAccessibilityService : AccessibilityService() {
 
                 waitUntilTarget(started, target)
                 saveHistory(postId, postTitle, blogName, keyword.keyword, likeResult, commentResult, overall, "", started, effectiveTestMode, comment?.content.orEmpty())
-                finishPost(keyword, settings, stats, likeResult == "SUCCESS", commentResult == "SUCCESS", overall == "SKIPPED")
-                if (comment != null && commentResult in setOf("SUCCESS", "TEST_ONLY")) {
+                finishPost(keyword, stats, likeResult, commentResult, overall)
+                if (comment != null && commentResult == "SUCCESS") {
                     db.dao().updateComment(comment.copy(useCount = comment.useCount + 1, lastUsedAt = System.currentTimeMillis()))
                 }
                 performGlobalAction(GLOBAL_ACTION_BACK)
@@ -937,13 +1025,26 @@ class BlogAccessibilityService : AccessibilityService() {
         val search = waitNode(NaverNodeTexts.SEARCH, 3) ?: return false
         if (!clickNode(search)) return false
         delay(1000)
+
         val input = waitEditableOrText(NaverNodeTexts.SEARCH_INPUT, 3) ?: return false
         if (!setText(input, keyword)) return false
-        input.performAction(AccessibilityNodeInfo.ACTION_IME_ENTER)
+
+        val submitted = input.performAction(AccessibilityNodeInfo.ACTION_IME_ENTER)
+        if (!submitted) {
+            val submitButton = waitNode(NaverNodeTexts.SEARCH_SUBMIT, 2) ?: return false
+            if (!clickNode(submitButton)) return false
+        }
         delay(Random.nextLong(3_000, 10_001))
-        waitNode(NaverNodeTexts.BLOG_TAB, 3)?.let { clickNode(it); delay(1200) }
-        waitNode(NaverNodeTexts.LATEST, 3)?.let { clickNode(it); delay(Random.nextLong(3_000, 10_001)) }
-        return rootInActiveWindow != null
+
+        val blogTab = waitNode(NaverNodeTexts.BLOG_TAB, 4) ?: return false
+        if (!clickNode(blogTab)) return false
+        delay(1200)
+
+        val latest = waitNode(NaverNodeTexts.LATEST, 4) ?: return false
+        if (!clickNode(latest)) return false
+        delay(Random.nextLong(3_000, 10_001))
+
+        return isNaverBlogScreen() && containsAny(rootInActiveWindow, NaverNodeTexts.BLOG_TAB + NaverNodeTexts.LATEST)
     }
 
     private suspend fun openFirstUnprocessedPost(keyword: String): Triple<String,String,String>? {
@@ -987,22 +1088,48 @@ class BlogAccessibilityService : AccessibilityService() {
         val button = waitNode(NaverNodeTexts.COMMENT, 2) ?: return "NOT_AVAILABLE"
         if (!clickNode(button)) return "FAILED"
         delay(Random.nextLong(3_000, 8_001))
-        val input = waitEditableOrText(NaverNodeTexts.COMMENT_INPUT, 3) ?: return "INPUT_NOT_FOUND"
-        if (!setText(input, text)) return "INPUT_NOT_FOUND"
+
+        val input = waitEditableOrText(NaverNodeTexts.COMMENT_INPUT, 3)
+        if (input == null) {
+            performGlobalAction(GLOBAL_ACTION_BACK)
+            delay(800)
+            return "INPUT_NOT_FOUND"
+        }
+        if (text.isBlank() || !setText(input, text)) {
+            performGlobalAction(GLOBAL_ACTION_BACK)
+            delay(800)
+            return "INPUT_NOT_FOUND"
+        }
+
         delay(Random.nextLong(10_000, 25_001))
-        val register = waitNode(NaverNodeTexts.REGISTER, 3) ?: return "REGISTER_NOT_FOUND"
+        val register = waitNode(NaverNodeTexts.REGISTER, 3)
+        if (register == null) {
+            setText(input, "")
+            performGlobalAction(GLOBAL_ACTION_BACK)
+            delay(800)
+            return "REGISTER_NOT_FOUND"
+        }
         if (settings.testMode) {
             setText(input, "")
             performGlobalAction(GLOBAL_ACTION_BACK)
+            delay(1_000)
             return "TEST_ONLY"
         }
-        if (!register.isEnabled || !clickNode(register)) return "FAILED"
+        if (!register.isEnabled || !clickNode(register)) {
+            performGlobalAction(GLOBAL_ACTION_BACK)
+            delay(800)
+            return "FAILED"
+        }
+
         delay(Random.nextLong(5_000, 15_001))
         val root = rootInActiveWindow
         val editableAfter = findEditable(root)
         val inputCleared = editableAfter != null && editableAfter.text?.toString().orEmpty().isBlank()
         val writtenCommentFound = containsExactText(root, text)
         val confirmed = containsAny(root, NaverNodeTexts.COMMENT_SUCCESS) || inputCleared || writtenCommentFound
+
+        performGlobalAction(GLOBAL_ACTION_BACK)
+        delay(1_000)
         return if (confirmed) "SUCCESS" else "RESULT_UNCONFIRMED"
     }
 
@@ -1026,25 +1153,49 @@ class BlogAccessibilityService : AccessibilityService() {
         return if (settings.commentMode == "RANDOM") comments.random() else comments[settings.currentCommentIndex.mod(comments.size)]
     }
 
-    private suspend fun finishPost(keyword: KeywordEntity, settings: AppSettings, stats: DailyStatsEntity, like: Boolean, comment: Boolean, skipped: Boolean) {
-        val updatedKeyword = keyword.copy(todayCount = keyword.todayCount + 1, lastCountDate = today(), updatedAt = System.currentTimeMillis())
+    private suspend fun finishPost(
+        keyword: KeywordEntity,
+        stats: DailyStatsEntity,
+        likeResult: String,
+        commentResult: String,
+        overallResult: String
+    ) {
+        val updatedKeyword = keyword.copy(
+            todayCount = keyword.todayCount + 1,
+            lastCountDate = today(),
+            updatedAt = System.currentTimeMillis()
+        )
         db.dao().updateKeyword(updatedKeyword)
+
         val updatedStats = stats.copy(
             processedCount = stats.processedCount + 1,
-            likeSuccessCount = stats.likeSuccessCount + if (like) 1 else 0,
-            commentSuccessCount = stats.commentSuccessCount + if (comment) 1 else 0,
-            skipCount = stats.skipCount + if (skipped) 1 else 0,
-            failureCount = stats.failureCount + if (!like && !comment && !skipped) 1 else 0
+            likeSuccessCount = stats.likeSuccessCount + if (likeResult == "SUCCESS") 1 else 0,
+            commentSuccessCount = stats.commentSuccessCount + if (commentResult == "SUCCESS") 1 else 0,
+            skipCount = stats.skipCount + if (overallResult == "SKIPPED") 1 else 0,
+            failureCount = stats.failureCount + if (overallResult in setOf("FAILED", "NEEDS_REVIEW")) 1 else 0
         )
         db.dao().upsertDailyStats(updatedStats)
-        store.save(settings.copy(currentKeywordIndex = settings.currentKeywordIndex + 1, currentCommentIndex = settings.currentCommentIndex + 1))
-        val s = AutomationState.state.value
-        AutomationState.state.value = s.copy(
+
+        val latestSettings = store.settings.first()
+        store.save(
+            latestSettings.copy(
+                currentKeywordIndex = latestSettings.currentKeywordIndex + 1,
+                currentCommentIndex = latestSettings.currentCommentIndex + 1
+            )
+        )
+
+        val nextRestIn = if (latestSettings.restEnabled) {
+            val remainder = updatedStats.processedCount % latestSettings.restEvery.coerceAtLeast(1)
+            if (remainder == 0) latestSettings.restEvery else latestSettings.restEvery - remainder
+        } else 0
+
+        AutomationState.state.value = AutomationState.state.value.copy(
             todayProcessed = updatedStats.processedCount,
             likeSuccess = updatedStats.likeSuccessCount,
             commentSuccess = updatedStats.commentSuccessCount,
             skipped = updatedStats.skipCount,
             errors = updatedStats.failureCount,
+            nextRestIn = nextRestIn,
             status = "게시글 처리 완료",
             elapsedSeconds = 0,
             remainingSeconds = 0
@@ -1091,17 +1242,45 @@ class BlogAccessibilityService : AccessibilityService() {
 
     private fun scheduleState(s: AppSettings): ScheduleState {
         if (!s.scheduleEnabled) return ScheduleState.ACTIVE
-        val c = Calendar.getInstance()
-        val day = when (c.get(Calendar.DAY_OF_WEEK)) { Calendar.MONDAY->1; Calendar.TUESDAY->2; Calendar.WEDNESDAY->3; Calendar.THURSDAY->4; Calendar.FRIDAY->5; Calendar.SATURDAY->6; else->7 }
-        if (day !in s.enabledDays) return ScheduleState.DISABLED_DAY
-        val now = c.get(Calendar.HOUR_OF_DAY) * 60 + c.get(Calendar.MINUTE)
+
+        val calendar = Calendar.getInstance()
+        val now = calendar.get(Calendar.HOUR_OF_DAY) * 60 + calendar.get(Calendar.MINUTE)
         val start = s.startHour * 60 + s.startMinute
         val end = s.endHour * 60 + s.endMinute
-        if (start == end) return ScheduleState.ACTIVE
-        if (start < end) {
-            return when { now < start -> ScheduleState.BEFORE_START; now >= end -> ScheduleState.AFTER_END; else -> ScheduleState.ACTIVE }
+
+        if (start == end) {
+            return if (dayIndex(calendar) in s.enabledDays) ScheduleState.ACTIVE else ScheduleState.DISABLED_DAY
         }
-        return if (now >= start || now < end) ScheduleState.ACTIVE else ScheduleState.BEFORE_START
+
+        if (start < end) {
+            if (dayIndex(calendar) !in s.enabledDays) return ScheduleState.DISABLED_DAY
+            return when {
+                now < start -> ScheduleState.BEFORE_START
+                now >= end -> ScheduleState.AFTER_END
+                else -> ScheduleState.ACTIVE
+            }
+        }
+
+        // 자정을 넘기는 일정: 종료시각 이전은 전날 운영요일의 연장 구간입니다.
+        if (now >= start) {
+            return if (dayIndex(calendar) in s.enabledDays) ScheduleState.ACTIVE else ScheduleState.DISABLED_DAY
+        }
+        if (now < end) {
+            val previousDay = calendar.clone() as Calendar
+            previousDay.add(Calendar.DAY_OF_YEAR, -1)
+            return if (dayIndex(previousDay) in s.enabledDays) ScheduleState.ACTIVE else ScheduleState.DISABLED_DAY
+        }
+        return ScheduleState.BEFORE_START
+    }
+
+    private fun dayIndex(c: Calendar): Int = when (c.get(Calendar.DAY_OF_WEEK)) {
+        Calendar.MONDAY -> 1
+        Calendar.TUESDAY -> 2
+        Calendar.WEDNESDAY -> 3
+        Calendar.THURSDAY -> 4
+        Calendar.FRIDAY -> 5
+        Calendar.SATURDAY -> 6
+        else -> 7
     }
 
     private suspend fun waitNode(candidates: List<String>, tries: Int): AccessibilityNodeInfo? {
@@ -1169,8 +1348,21 @@ class BlogAccessibilityService : AccessibilityService() {
     private suspend fun saveHistory(id:String,title:String,blog:String,keyword:String,like:String,comment:String,overall:String,reason:String,started:Long,test:Boolean,used:String="") { db.dao().insertHistory(PostHistoryEntity(postUniqueId=id,postTitle=title,blogName=blog,keyword=keyword,likeResult=like,commentResult=comment,overallResult=overall,failureReason=reason,processingDuration=(System.currentTimeMillis()-started)/1000,testMode=test,usedComment=used)) }
     private suspend fun recordFailure(keyword:String, started:Long, reason:String) = saveHistory(sha256("$keyword|$started"),"","",keyword,"DISABLED","DISABLED","FAILED",reason,started,false)
     private suspend fun handleError(s:AppSettings, reason:String) { log("ERROR","ERROR",reason); if (s.errorAction=="STOP") stopWith(reason) else { AutomationState.pauseRequested=true; AutomationState.state.value=AutomationState.state.value.copy(status=reason,paused=true) } }
-    private suspend fun stopWith(reason:String) { AutomationState.stopRequested=true; AutomationState.state.value=AutomationState.state.value.copy(running=false,status=reason); log("WARNING","STOP",reason) }
-    private fun stopNow(reason:String) { AutomationState.stopRequested=true; AutomationState.state.value=AutomationState.state.value.copy(running=false,status=reason) }
+    private suspend fun stopWith(reason: String) {
+        AutomationState.stopRequested = true
+        AutomationState.pauseRequested = false
+        AutomationState.testRunOverride = false
+        AutomationState.state.value = AutomationState.state.value.copy(running = false, paused = false, status = reason)
+        log("WARNING", "STOP", reason)
+        AutomationForegroundService.stop(this, reason)
+    }
+    private fun stopNow(reason: String) {
+        AutomationState.stopRequested = true
+        AutomationState.pauseRequested = false
+        AutomationState.testRunOverride = false
+        AutomationState.state.value = AutomationState.state.value.copy(running = false, paused = false, status = reason)
+        AutomationForegroundService.stop(this, reason)
+    }
     private fun sha256(s:String)=MessageDigest.getInstance("SHA-256").digest(s.toByteArray()).joinToString(""){"%02x".format(it)}
     private fun today()=SimpleDateFormat("yyyy-MM-dd",Locale.KOREA).format(Date())
 }
@@ -1211,13 +1403,14 @@ object NaverNodeTexts {
     const val NAVER_BLOG_PACKAGE = "com.nhn.android.blog"
     val SEARCH = listOf("검색")
     val SEARCH_INPUT = listOf("검색어를 입력", "검색어 입력", "검색")
+    val SEARCH_SUBMIT = listOf("검색 실행", "검색하기", "검색")
     val BLOG_TAB = listOf("블로그")
     val LATEST = listOf("최신순")
     val LIKE = listOf("좋아요", "공감", "하트", "like", "heart")
     val LIKED = listOf("좋아요 취소", "공감 취소", "선택됨")
     val COMMENT = listOf("댓글", "댓글 쓰기", "댓글 입력", "첫 번째 댓글을 남겨주세요")
     val COMMENT_INPUT = listOf("댓글을 입력해주세요", "댓글을 입력해주세요.", "내용을 입력해주세요", "댓글 쓰기")
-    val REGISTER = listOf("등록", "작성", "확인")
+    val REGISTER = listOf("등록", "작성")
     val COMMENT_SUCCESS = listOf("등록되었습니다", "작성되었습니다")
     val BLOCKED = listOf("잠시 후 다시 이용", "이용이 제한", "비정상적인 접근", "보안 확인", "본인인증", "자동입력 방지", "로그인이 필요", "네트워크 연결 확인")
     val POST_SCREEN_MARKERS = listOf("좋아요", "공감", "댓글", "본문", "이 블로그 검색")
