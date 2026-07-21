@@ -2,32 +2,12 @@ name: Build Android APK
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - main
-      - master
-    paths:
-      - "**/*.kt"
-      - "**/*.kts"
-      - "**/*.xml"
-      - "gradle/**"
-      - "gradlew"
-      - ".github/workflows/build-apk.yml"
-  pull_request:
-    branches:
-      - main
-      - master
 
 permissions:
   contents: read
 
-concurrency:
-  group: android-apk-${{ github.ref }}
-  cancel-in-progress: true
-
 jobs:
   build:
-    name: Build Debug APK
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
@@ -41,41 +21,68 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      - name: Set up Gradle
+      - name: Set up Gradle 8.9
         uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.9"
 
-      - name: Make Gradle wrapper executable
-        run: chmod +x ./gradlew
-
-      - name: Show project information
+      - name: Unzip Android project
         run: |
-          java -version
-          ./gradlew --version
+          rm -rf extracted
+          mkdir extracted
+          unzip -q KnowledgeInDualMobileProject.zip -d extracted
+          echo "압축 해제 완료"
+          find extracted -maxdepth 4 -type f | head -100
+
+      - name: Find Android project
+        id: project
+        shell: bash
+        run: |
+          PROJECT_DIR="$(dirname "$(find extracted -type f -name settings.gradle.kts | head -n 1)")"
+
+          if [ -z "$PROJECT_DIR" ] || [ "$PROJECT_DIR" = "." ]; then
+            echo "settings.gradle.kts를 찾지 못했습니다."
+            exit 1
+          fi
+
+          if [ ! -d "$PROJECT_DIR/app" ]; then
+            echo "app 폴더를 찾지 못했습니다."
+            find "$PROJECT_DIR" -maxdepth 3 -type d
+            exit 1
+          fi
+
+          echo "dir=$PROJECT_DIR" >> "$GITHUB_OUTPUT"
+          echo "프로젝트 위치: $PROJECT_DIR"
 
       - name: Build debug APK
-        run: ./gradlew :app:assembleDebug --stacktrace
+        shell: bash
+        run: |
+          cd "${{ steps.project.outputs.dir }}"
+          gradle :app:assembleDebug --stacktrace
 
       - name: Collect APK
         shell: bash
         run: |
-          set -e
           mkdir -p apk-output
 
-          APK_PATH="$(find app/build/outputs/apk/debug -type f -name '*.apk' | head -n 1)"
+          APK_PATH="$(find "${{ steps.project.outputs.dir }}" \
+            -type f \
+            -path "*/app/build/outputs/apk/debug/*.apk" \
+            | head -n 1)"
 
           if [ -z "$APK_PATH" ]; then
-            echo "APK 파일을 찾지 못했습니다."
-            find app/build/outputs -maxdepth 5 -type f || true
+            echo "생성된 APK를 찾지 못했습니다."
+            find "${{ steps.project.outputs.dir }}" -path "*/build/outputs/*" -type f || true
             exit 1
           fi
 
-          cp "$APK_PATH" "apk-output/BlogActivityManager_v1.0-debug.apk"
+          cp "$APK_PATH" apk-output/KnowledgeManager-debug.apk
           ls -lh apk-output
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: BlogActivityManager-v1.0-debug
-          path: apk-output/BlogActivityManager_v1.0-debug.apk
+          name: KnowledgeManager-debug-apk
+          path: apk-output/KnowledgeManager-debug.apk
           if-no-files-found: error
           retention-days: 30
